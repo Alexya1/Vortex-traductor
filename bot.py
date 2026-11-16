@@ -1,3 +1,4 @@
+import os
 import discord
 from deep_translator import GoogleTranslator
 
