@@ -55,4 +55,4 @@ async def on_message(message):
             traduccion = GoogleTranslator(source='en', target='es').translate(message.content)
             await enviar_webhook(destino, message, traduccion)
 
-client.run("MTU3MTgwMzQ4NzYxMDczMjU5NA.GU16GC._q7Ad9aFfIHmftoMP_5ulu0BLV_s5Bcxha-Nes")
+client.run(os.environ.get("DISCORD_TOKEN"))
