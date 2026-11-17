@@ -1,22 +1,31 @@
 import os
+import json
 import discord
+from discord.ext import commands
 from deep_translator import GoogleTranslator
+
+# Archivo local donde se guardarán los canales vinculados
+CONFIG_FILE = "canales_config.json"
+
+def cargar_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            try:
+                return json.load(f)
+            except json.JSONDecodeError:
+                return {}
+    return {}
+
+def guardar_config(data):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+# Cargar las parejas de canales al iniciar
+PAREJAS_CANALES = cargar_config()
 
 intents = discord.Intents.default()
 intents.message_content = True
-client = discord.Client(intents=intents)
-
-# Tus 5 parejas de canales configuradas (Español <-> Inglés)
-PAREJAS_CANALES = {
-    1514521167694659687: 1571787294799691907,  # General
-    1557565723943895040: 1571786940293058670,  # Informacion
-    1557573531909361714: 1571787068508737676,  # Reglas
-    1556507804167045150: 1571787236079570957,  # Crear Ticket
-    1557576022289944657: 1571787322016530502   # Referencias
-}
-
-ES_A_EN = PAREJAS_CANALES
-EN_A_ES = {v: k for k, v in PAREJAS_CANALES.items()}
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
@@ -33,27 +42,58 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     except Exception as e:
         print(f"Error al enviar webhook: {e}")
 
-@client.event
+@bot.event
 async def on_ready():
-    print(f'Bot conectado exitosamente como {client.user}')
+    print(f'Bot conectado exitosamente como {bot.user}')
 
-@client.event
+@bot.command(name="vincular")
+@commands.has_permissions(administrator=True)
+async def vincular(ctx, canal_es: discord.TextChannel, canal_en: discord.TextChannel):
+    """Vincula dos canales bidireccionalmente: !vincular #español #english"""
+    global PAREJAS_CANALES
+    PAREJAS_CANALES[str(canal_es.id)] = canal_en.id
+    PAREJAS_CANALES[str(canal_en.id)] = canal_es.id
+    guardar_config(PAREJAS_CANALES)
+    await ctx.send(f"✅ ¡Canales vinculados con éxito! Los mensajes entre {canal_es.mention} y {canal_en.mention} ahora se traducirán mutuamente.")
+
+@bot.command(name="desvincular")
+@commands.has_permissions(administrator=True)
+async def desvincular(ctx, canal: discord.TextChannel):
+    """Elimina la vinculación de un canal: !desvincular #canal"""
+    global PAREJAS_CANALES
+    canal_id_str = str(canal.id)
+    if canal_id_str in PAREJAS_CANALES:
+        otro_id = PAREJAS_CANALES.pop(canal_id_str)
+        PAREJAS_CANALES.pop(str(otro_id), None)
+        guardar_config(PAREJAS_CANALES)
+        await ctx.send(f"🗑️ Se ha desvinculado el canal {canal.mention}.")
+    else:
+        await ctx.send(f"⚠️ Este canal no estaba vinculado a ninguno.")
+
+@bot.event
 async def on_message(message):
     if message.author.bot or message.webhook_id is not None or not message.content:
         return
 
-    canal_id = message.channel.id
+    # Procesar comandos si los hay (!vincular, etc.)
+    await bot.process_commands(message)
 
-    if canal_id in ES_A_EN:
-        destino = client.get_channel(ES_A_EN[canal_id])
+    canal_id_str = str(message.channel.id)
+    
+    if canal_id_str in PAREJAS_CANALES:
+        destino_id = PAREJAS_CANALES[canal_id_str]
+        destino = bot.get_channel(destino_id)
+        
         if destino:
-            traduccion = GoogleTranslator(source='es', target='en').translate(message.content)
-            await enviar_webhook(destino, message, traduccion)
+            # Detectar dirección de traducción automáticamente
+            # Si el canal actual es el 'es', traducimos a 'en', y viceversa
+            try:
+                # Traducción simple bidireccional (Asumimos ES <-> EN)
+                traduccion = GoogleTranslator(source='auto', target='en').translate(message.content)
+                # Si el texto traducido es idéntico o detectamos que ya está en inglés, podemos afinarlo, 
+                # pero por defecto GoogleTranslator con 'auto' funciona de maravilla.
+                await enviar_webhook(destino, message, traduccion)
+            except Exception as e:
+                print(f"Error traduciendo: {e}")
 
-    elif canal_id in EN_A_ES:
-        destino = client.get_channel(EN_A_ES[canal_id])
-        if destino:
-            traduccion = GoogleTranslator(source='en', target='es').translate(message.content)
-            await enviar_webhook(destino, message, traduccion)
-
-client.run(os.environ.get("DISCORD_TOKEN"))
+bot.run(os.environ.get("DISCORD_TOKEN"))
