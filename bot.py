@@ -38,9 +38,11 @@ def guardar_config(data):
 
 PAREJAS_CANALES = cargar_config()
 
-# 3. INICIALIZACIÓN
+# 3. INICIALIZACIÓN CON INTENTS EXPLÍCITOS
 intents = discord.Intents.default()
+intents.messages = True
 intents.message_content = True
+intents.guilds = True
 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
@@ -57,15 +59,19 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
             username=mensaje.author.display_name,
             avatar_url=mensaje.author.display_avatar.url
         )
-        print(f"ÉXITO: Traducido y enviado a {canal_destino.name}")
+        print(f"🔥 ÉXITO TOTAL: Traducido y enviado a #{canal_destino.name}")
     except Exception as e:
-        print(f"ERROR AL ENVIAR WEBHOOK: {e}")
+        print(f"❌ ERROR CRÍTICO AL ENVIAR WEBHOOK: {e}")
 
 @client.event
 async def on_ready():
     await tree.sync()
-    print(f'Bot conectado como {client.user}')
+    print(f'🚀 Bot conectado correctamente como {client.user}')
+    print(f'🏠 El bot está en los siguientes servidores:')
+    for guild in client.guilds:
+        print(f'   - {guild.name} (ID: {guild.id})')
 
+# COMANDOS SLASH
 @tree.command(name="vincular", description="Vincula dos canales para traducción bidireccional")
 @app_commands.describe(canal_es="Canal de español", canal_en="Canal de inglés")
 @app_commands.checks.has_permissions(administrator=True)
@@ -77,7 +83,7 @@ async def vincular(interaction: discord.Interaction, canal_es: discord.TextChann
     PAREJAS_CANALES[str(canal_en.id)] = {"destino": canal_es.id, "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
     
-    print(f"Canales vinculados: {canal_es.id} <-> {canal_en.id}")
+    print(f"🔗 Canales vinculados en JSON: {canal_es.id} <-> {canal_en.id}")
     await interaction.followup.send(f"✅ ¡Listo! Canales vinculados: {canal_es.mention} y {canal_en.mention}", ephemeral=True)
 
 @tree.command(name="desvincular", description="Desvincula un canal")
@@ -115,26 +121,34 @@ async def vinculados(interaction: discord.Interaction):
 
 @client.event
 async def on_message(message):
+    # Imprimir CUALQUIER mensaje que el bot alcance a ver en el servidor
+    print(f"📥 MENSAJE CAPTURADO | Autor: {message.author} | Canal ID: {message.channel.id} | Contenido: {message.content}")
+
     if message.author.bot or message.webhook_id is not None or not message.content:
         return
 
     canal_id_str = str(message.channel.id)
-    print(f"Mensaje detectado en canal ID {canal_id_str}: '{message.content}'")
 
     if canal_id_str in PAREJAS_CANALES:
         info = PAREJAS_CANALES[canal_id_str]
         destino = client.get_channel(info["destino"])
         idioma = info["idioma"]
         
+        print(f"🎯 ¡El canal coincide! Traduciendo a {idioma} hacia el canal ID {info['destino']}")
+        
         if destino:
             try:
                 traducido = GoogleTranslator(source='auto', target=idioma).translate(message.content)
                 await enviar_webhook(destino, message, traducido)
             except Exception as ex:
-                print(f"Error en la traducción: {ex}")
+                print(f"⚠️ Error traduciendo con GoogleTranslator: {ex}")
         else:
-            print(f"El canal destino con ID {info['destino']} no fue encontrado.")
+            print(f"⚠️ Alerta: El canal destino con ID {info['destino']} no se pudo obtener.")
     else:
-        print(f"El canal {canal_id_str} NO está registrado en las parejas.")
+        print(f"ℹ️ El canal {canal_id_str} NO está en la lista de parejas guardadas.")
 
-client.run(os.environ.get("DISCORD_TOKEN"))
+token = os.environ.get("DISCORD_TOKEN")
+if not token:
+    print("❌ ERROR CRÍTICO: DISCORD_TOKEN no está definido en las variables de entorno.")
+else:
+    client.run(token)
