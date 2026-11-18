@@ -27,14 +27,19 @@ def cargar_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             try:
-                return json.load(f)
+                data = json.load(f)
+                print(f"📂 Configuración cargada con éxito: {data}")
+                return data
             except json.JSONDecodeError:
+                print("⚠️ Error leyendo el JSON, reiniciando diccionario.")
                 return {}
+    print("ℹ️ No existe archivo de configuración previo, iniciando vacío.")
     return {}
 
 def guardar_config(data):
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
+    print(f"💾 Configuración guardada en disco: {data}")
 
 PAREJAS_CANALES = cargar_config()
 
@@ -67,8 +72,9 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
 async def on_ready():
     await tree.sync()
     print(f'🚀 Bot conectado correctamente como {client.user}')
+    print(f'📊 Canales vinculados actualmente en memoria: {PAREJAS_CANALES}')
 
-# COMANDOS SLASH (VINCULAR POR ID DE TEXTO)
+# COMANDOS SLASH
 @tree.command(name="vincular", description="Vincula dos canales por su ID exacto")
 @app_commands.describe(id_es="ID del canal de español", id_en="ID del canal de inglés")
 @app_commands.checks.has_permissions(administrator=True)
@@ -83,26 +89,15 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
     PAREJAS_CANALES[c_en_id] = {"destino": int(c_es_id), "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
     
-    print(f"🔗 Canales vinculados por ID: {c_es_id} <-> {c_en_id}")
+    print(f"🔗 Canales vinculados: {c_es_id} <-> {c_en_id}")
     await interaction.followup.send(f"✅ ¡Vinculación exitosa por ID!\n• <#{c_es_id}> ⟷ <#{c_en_id}>", ephemeral=True)
-
-@tree.command(name="desvincular", description="Desvincula un canal")
-@app_commands.checks.has_permissions(administrator=True)
-async def desvincular(interaction: discord.Interaction, canal: discord.TextChannel):
-    await interaction.response.defer(ephemeral=True)
-    global PAREJAS_CANALES
-    canal_id_str = str(canal.id)
-    if canal_id_str in PAREJAS_CANALES:
-        otro_id = PAREJAS_CANALES.pop(canal_id_str)["destino"]
-        PAREJAS_CANALES.pop(str(otro_id), None)
-        guardar_config(PAREJAS_CANALES)
-        await interaction.followup.send(f"🗑️ Canal desvinculado.", ephemeral=True)
-    else:
-        await interaction.followup.send(f"⚠️ Ese canal no estaba vinculado.", ephemeral=True)
 
 @tree.command(name="vinculados", description="Muestra canales activos")
 async def vinculados(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
+    global PAREJAS_CANALES
+    PAREJAS_CANALES = cargar_config() # Recarga fresca
+    
     if not PAREJAS_CANALES:
         await interaction.followup.send("ℹ️ No hay canales vinculados.", ephemeral=True)
         return
@@ -121,9 +116,13 @@ async def vinculados(interaction: discord.Interaction):
 
 @client.event
 async def on_message(message):
-    print(f"📥 MENSAJE CAPTURADO | Autor: {message.author} | Canal ID: {message.channel.id} | Contenido: {message.content}")
+    # Imprimir CUALQUIER mensaje de texto que ocurra en el servidor
+    if message.author.bot:
+        return
+        
+    print(f"📥 MENSAJE DETECTADO | Autor: {message.author} | Canal ID: {message.channel.id} | Contenido: {message.content}")
 
-    if message.author.bot or message.webhook_id is not None or not message.content:
+    if message.webhook_id is not None or not message.content:
         return
 
     canal_id_str = str(message.channel.id)
