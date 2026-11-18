@@ -38,7 +38,7 @@ def guardar_config(data):
 
 PAREJAS_CANALES = cargar_config()
 
-# 3. INICIALIZACIÓN DEL CLIENT Y EL TREE (Declarados en orden correcto)
+# 3. INICIALIZACIÓN
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -57,15 +57,15 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
             username=mensaje.author.display_name,
             avatar_url=mensaje.author.display_avatar.url
         )
+        print(f"✅ Traducción enviada con éxito a {canal_destino.name}")
     except Exception as e:
-        print(f"Error al enviar webhook: {e}")
+        print(f"❌ Error al enviar webhook en {canal_destino.name}: {e}")
 
 @client.event
 async def on_ready():
     await tree.sync()
     print(f'¡Bot conectado exitosamente como {client.user} y comandos sincronizados!')
 
-# 4. COMANDOS SLASH (Usando 'tree' correctamente definido)
 @tree.command(name="vincular", description="Vincula dos canales para traducción bidireccional")
 @app_commands.describe(canal_es="Canal de español", canal_en="Canal de inglés")
 @app_commands.checks.has_permissions(administrator=True)
@@ -77,6 +77,7 @@ async def vincular(interaction: discord.Interaction, canal_es: discord.TextChann
     PAREJAS_CANALES[str(canal_en.id)] = {"destino": canal_es.id, "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
     
+    print(f"Canales vinculados: {canal_es.id} <-> {canal_en.id}")
     await interaction.followup.send(f"✅ ¡Listo! Todo lo que escriban en {canal_es.mention} saldrá en inglés en {canal_en.mention}, y viceversa.", ephemeral=True)
 
 @tree.command(name="desvincular", description="Desvincula un canal de traducción")
@@ -101,6 +102,8 @@ async def on_message(message):
         return
 
     canal_id_str = str(message.channel.id)
+    print(f"Mensaje recibido en canal ID {canal_id_str}: {message.content}")
+
     if canal_id_str in PAREJAS_CANALES:
         info = PAREJAS_CANALES[canal_id_str]
         destino = client.get_channel(info["destino"])
@@ -112,5 +115,9 @@ async def on_message(message):
                 await enviar_webhook(destino, message, traduccion)
             except Exception as e:
                 print(f"Error traduciendo: {e}")
+        else:
+            print(f"⚠️ El canal destino con ID {info['destino']} no fue encontrado por el bot.")
+    else:
+        print(f"ℹ️ El canal {canal_id_str} no está registrado en PAREJAS_CANALES.")
 
 client.run(os.environ.get("DISCORD_TOKEN"))
