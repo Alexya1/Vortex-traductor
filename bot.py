@@ -66,6 +66,7 @@ async def on_ready():
     await tree.sync()
     print(f'¡Bot conectado exitosamente como {client.user} y comandos sincronizados!')
 
+# COMANDOS SLASH
 @tree.command(name="vincular", description="Vincula dos canales para traducción bidireccional")
 @app_commands.describe(canal_es="Canal de español", canal_en="Canal de inglés")
 @app_commands.checks.has_permissions(administrator=True)
@@ -77,7 +78,6 @@ async def vincular(interaction: discord.Interaction, canal_es: discord.TextChann
     PAREJAS_CANALES[str(canal_en.id)] = {"destino": canal_es.id, "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
     
-    print(f"Canales vinculados: {canal_es.id} <-> {canal_en.id}")
     await interaction.followup.send(f"✅ ¡Listo! Todo lo que escriban en {canal_es.mention} saldrá en inglés en {canal_en.mention}, y viceversa.", ephemeral=True)
 
 @tree.command(name="desvincular", description="Desvincula un canal de traducción")
@@ -96,14 +96,60 @@ async def desvincular(interaction: discord.Interaction, canal: discord.TextChann
     else:
         await interaction.followup.send(f"⚠️ Ese canal no estaba vinculado a nada.", ephemeral=True)
 
+@tree.command(name="vinculados", description="Muestra la lista de canales actualmente vinculados")
+async def vinculados(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+    
+    if not PAREJAS_CANALES:
+        await interaction.followup.send("ℹ️ No hay canales vinculados en este momento.", ephemeral=True)
+        return
+
+    # Para evitar repetir parejas (ya que guardamos ida y vuelta), filtramos
+    vistos = set()
+    texto_lista = "📋 **Canales de traducción activos:**\n"
+    
+    for canal_id_str, info in PAREJAS_CANALES.items():
+        if canal_id_str in vistos:
+            continue
+        
+        destino_id = info["destino"]
+        vistos.add(str(destino_id))
+        vistos.add(canal_id_str)
+        
+        canal_1 = client.get_channel(int(canal_id_str))
+        canal_2 = client.get_channel(int(destino_id))
+        
+        c1_m = canal_1.mention if canal_1 else f"<#{canal_id_str}>"
+        c2_m = canal_2.mention if canal_2 else f"<#{destino_id}>"
+        
+        texto_lista.append(f"• {c1_m} ⟷ {c2_m}\n" if hasattr(texto_lista, 'append') else f"• {c1_m} ⟷ {c2_m}\n")
+        # Si prefieres formato plano acumulativo:
+        # texto_lista += f"• {c1_m} ⟷ {c2_m}\n"
+
+    # Corrección limpia para concatenar strings
+    resultado = "📋 **Canales de traducción activos:**\n"
+    vistos_limpios = set()
+    for canal_id_str, info in PAREJAS_CANALES.items():
+        if canal_id_str in vistos_limpios:
+            continue
+        destino_id = info["destino"]
+        vistos_limpios.add(str(destino_id))
+        vistos_limpios.add(canal_id_str)
+        
+        c1 = client.get_channel(int(canal_id_str))
+        c2 = client.get_channel(int(destino_id))
+        m1 = c1.mention if c1 else f"<#{canal_id_str}>"
+        m2 = c2.mention if c2 else f"<#{destino_id}>"
+        resultado += f"• {m1} ⟷ {m2}\n"
+
+    await interaction.followup.send(resultado, ephemeral=True)
+
 @client.event
 async def on_message(message):
     if message.author.bot or message.webhook_id is not None or not message.content:
         return
 
     canal_id_str = str(message.channel.id)
-    print(f"Mensaje recibido en canal ID {canal_id_str}: {message.content}")
-
     if canal_id_str in PAREJAS_CANALES:
         info = PAREJAS_CANALES[canal_id_str]
         destino = client.get_channel(info["destino"])
@@ -115,9 +161,5 @@ async def on_message(message):
                 await enviar_webhook(destino, message, traduccion)
             except Exception as e:
                 print(f"Error traduciendo: {e}")
-        else:
-            print(f"⚠️ El canal destino con ID {info['destino']} no fue encontrado por el bot.")
-    else:
-        print(f"ℹ️ El canal {canal_id_str} no está registrado en PAREJAS_CANALES.")
 
 client.run(os.environ.get("DISCORD_TOKEN"))
