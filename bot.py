@@ -48,43 +48,30 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-DEEPL_KEY = os.environ.get("DEEPL_API_KEY")
-
-# Traductor profesional con DeepL API Free (Cero bloqueos 429)
+# Motor dinámico bidireccional con MyMemory + Email de cortesía (Evita bloqueos 429)
 def traducir_texto(texto, target_lang):
-    if not DEEPL_KEY:
-        print("ERROR CRÍTICO: Falta la variable DEEPL_API_KEY en Render.")
-        return None
-        
     try:
-        # DeepL usa códigos de idioma en mayúsculas (EN, ES, etc.)
-        target_lang = target_lang.upper()
-        if target_lang == "EN":
-            target_lang = "EN-US" # O EN-GB según prefieras
+        # Detecta el par de idiomas de forma bidireccional exacta
+        if target_lang == "en":
+            langpair = "es|en"
+        else:
+            langpair = "en|es"
             
-        url = "https://api-free.deepl.com/v2/translate"
-        data = urllib.parse.urlencode({
-            "text": texto,
-            "target_lang": target_lang
-        }).encode("utf-8")
+        encoded_text = urllib.parse.quote(texto)
+        # Añadir un email de contacto en 'de' sube el límite gratuito diario a 10k palabras sin bloqueos de IP
+        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}&de=vortexbot.soporte@gmail.com"
         
         req = urllib.request.Request(
-            url,
-            data=data,
-            headers={
-                "Authorization": f"DeepL-Auth-Key {DEEPL_KEY}",
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            method="POST"
+            url, 
+            headers={"User-Agent": "Mozilla/5.0"}
         )
-        
         with urllib.request.urlopen(req, timeout=5) as response:
             res_data = json.loads(response.read().decode("utf-8"))
-            translations = res_data.get("translations", [])
-            if translations:
-                return translations[0].get("text")
+            translated = res_data.get("responseData", {}).get("translatedText", "")
+            if translated and "MYMEMORY WARNING" not in translated:
+                return translated
     except Exception as e:
-        print(f"Error en API de DeepL: {e}")
+        print(f"Error en traducción bidireccional: {e}")
         
     return None
 
@@ -122,11 +109,12 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
     c_es = id_es.strip().replace("<#", "").replace(">", "")
     c_en = id_en.strip().replace("<#", "").replace(">", "")
 
-    PAREJAS_CANALES[c_es] = {"destino": int(c_en), "idioma": "en"}
-    PAREJAS_CANALES[c_en] = {"destino": int(c_es), "idioma": "es"}
+    # Configuración limpia de canales cruzados
+    PAREJAS_CANALES[c_es] = {"destino": int(c_en), "idioma": "en"} # Canal ES traduce a EN
+    PAREJAS_CANALES[c_en] = {"destino": int(c_es), "idioma": "es"} # Canal EN traduce a ES
     guardar_config(PAREJAS_CANALES)
     
-    await interaction.followup.send(f"✅ ¡Vinculados <#{c_es}> ⟷ <#{c_en}>!", ephemeral=True)
+    await interaction.followup.send(f"✅ ¡Vinculados <#{c_es}> ⟷ <#{c_en}> de forma bidireccional!", ephemeral=True)
 
 @client.event
 async def on_message(message):
@@ -137,7 +125,7 @@ async def on_message(message):
     if canal_id in PAREJAS_CANALES:
         info = PAREJAS_CANALES[canal_id]
         destino = client.get_channel(info["destino"])
-        idioma = info["idioma"]
+        idioma = info["idioma"] # Aquí toma 'en' si escribes en español, o 'es' si escribes en inglés
         
         if destino:
             try:
@@ -147,7 +135,7 @@ async def on_message(message):
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
                 else:
-                    print("Traducción descartada por fallo en API.")
+                    print("Traducción omitida por fallo temporal del servicio.")
             except Exception as e:
                 print(f"Error procesando mensaje: {e}")
 
