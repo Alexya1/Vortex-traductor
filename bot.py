@@ -57,16 +57,15 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
             username=mensaje.author.display_name,
             avatar_url=mensaje.author.display_avatar.url
         )
-        print(f"✅ Traducción enviada con éxito a {canal_destino.name}")
+        print(f"ÉXITO: Traducido y enviado a {canal_destino.name}")
     except Exception as e:
-        print(f"❌ Error al enviar webhook en {canal_destino.name}: {e}")
+        print(f"ERROR AL ENVIAR WEBHOOK: {e}")
 
 @client.event
 async def on_ready():
     await tree.sync()
-    print(f'¡Bot conectado exitosamente como {client.user} y comandos sincronizados!')
+    print(f'Bot conectado como {client.user}')
 
-# 4. COMANDOS SLASH
 @tree.command(name="vincular", description="Vincula dos canales para traducción bidireccional")
 @app_commands.describe(canal_es="Canal de español", canal_en="Canal de inglés")
 @app_commands.checks.has_permissions(administrator=True)
@@ -78,47 +77,40 @@ async def vincular(interaction: discord.Interaction, canal_es: discord.TextChann
     PAREJAS_CANALES[str(canal_en.id)] = {"destino": canal_es.id, "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
     
-    await interaction.followup.send(f"✅ ¡Listo! Todo lo que escriban en {canal_es.mention} saldrá en inglés en {canal_en.mention}, y viceversa.", ephemeral=True)
+    print(f"Canales vinculados: {canal_es.id} <-> {canal_en.id}")
+    await interaction.followup.send(f"✅ ¡Listo! Canales vinculados: {canal_es.mention} y {canal_en.mention}", ephemeral=True)
 
-@tree.command(name="desvincular", description="Desvincula un canal de traducción")
-@app_commands.describe(canal="Canal a desvincular")
+@tree.command(name="desvincular", description="Desvincula un canal")
 @app_commands.checks.has_permissions(administrator=True)
 async def desvincular(interaction: discord.Interaction, canal: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
-    
     global PAREJAS_CANALES
     canal_id_str = str(canal.id)
     if canal_id_str in PAREJAS_CANALES:
         otro_id = PAREJAS_CANALES.pop(canal_id_str)["destino"]
         PAREJAS_CANALES.pop(str(otro_id), None)
         guardar_config(PAREJAS_CANALES)
-        await interaction.followup.send(f"🗑️ Se desvinculó el canal {canal.mention}.", ephemeral=True)
+        await interaction.followup.send(f"🗑️ Canal desvinculado.", ephemeral=True)
     else:
-        await interaction.followup.send(f"⚠️ Ese canal no estaba vinculado a nada.", ephemeral=True)
+        await interaction.followup.send(f"⚠️ Ese canal no estaba vinculado.", ephemeral=True)
 
-@tree.command(name="vinculados", description="Muestra la lista de canales actualmente vinculados")
+@tree.command(name="vinculados", description="Muestra canales activos")
 async def vinculados(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
-    
     if not PAREJAS_CANALES:
-        await interaction.followup.send("ℹ️ No hay canales vinculados en este momento.", ephemeral=True)
+        await interaction.followup.send("ℹ️ No hay canales vinculados.", ephemeral=True)
         return
 
-    resultado = "📋 **Canales de traducción activos:**\n"
-    vistos_limpios = set()
-    for canal_id_str, info in PAREJAS_CANALES.items():
-        if canal_id_str in vistos_limpios:
-            continue
-        destino_id = info["destino"]
-        vistos_limpios.add(str(destino_id))
-        vistos_limpios.add(canal_id_str)
-        
-        c1 = client.get_channel(int(canal_id_str))
-        c2 = client.get_channel(int(destino_id))
-        m1 = c1.mention if c1 else f"<#{canal_id_str}>"
-        m2 = c2.mention if c2 else f"<#{destino_id}>"
-        resultado += f"• {m1} ⟷ {m2}\n"
-
+    resultado = "📋 **Canales activos:**\n"
+    vistos = set()
+    for cid, info in PAREJAS_CANALES.items():
+        if cid in vistos: continue
+        did = info["destino"]
+        vistos.add(str(did))
+        vistos.add(cid)
+        c1, c2 = client.get_channel(int(cid)), client.get_channel(int(did))
+        resultado += f"• {c1.mention if c1 else cid} ⟷ {c2.mention if c2 else did}\n"
+    
     await interaction.followup.send(resultado, ephemeral=True)
 
 @client.event
@@ -127,16 +119,22 @@ async def on_message(message):
         return
 
     canal_id_str = str(message.channel.id)
+    print(f"Mensaje detectado en canal ID {canal_id_str}: '{message.content}'")
+
     if canal_id_str in PAREJAS_CANALES:
         info = PAREJAS_CANALES[canal_id_str]
         destino = client.get_channel(info["destino"])
-        idioma_destino = info["idioma"]
+        idioma = info["idioma"]
         
         if destino:
             try:
-                traduccion = GoogleTranslator(source='auto', target=idioma_destino).translate(message.content)
-                await enviar_webhook(destino, message, traduccion)
-            except Exception as e:
-                print(f"Error traduciendo: {e}")
+                traducido = GoogleTranslator(source='auto', target=idioma).translate(message.content)
+                await enviar_webhook(destino, message, traducido)
+            except Exception as ex:
+                print(f"Error en la traducción: {ex}")
+        else:
+            print(f"El canal destino con ID {info['destino']} no fue encontrado.")
+    else:
+        print(f"El canal {canal_id_str} NO está registrado en las parejas.")
 
 client.run(os.environ.get("DISCORD_TOKEN"))
