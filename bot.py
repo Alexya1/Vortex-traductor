@@ -3,13 +3,15 @@ import json
 import threading
 import asyncio
 import sys
+import urllib.parse
+import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord import app_commands
-from googletrans import Translator
 
 sys.stdout.reconfigure(line_buffering=True)
 
+# Servidor web para mantener vivo el servicio gratuito en Render
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -46,7 +48,27 @@ intents.messages = True
 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
-translator = Translator()
+
+# Traductor nativo ultraliviano (Cero librerías externas que fallen)
+def traducir_texto(texto, target_lang):
+    try:
+        langpair = f"autofrom|{target_lang}"
+        encoded_text = urllib.parse.quote(texto)
+        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}"
+        
+        req = urllib.request.Request(
+            url, 
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            translated = res_data.get("responseData", {}).get("translatedText", "")
+            if translated:
+                return translated
+        return None
+    except Exception as e:
+        print(f"Error en motor de traducción: {e}")
+        return None
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
@@ -67,7 +89,11 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
 @client.event
 async def on_ready():
     print(f"BOT LOGUEADO CORRECTAMENTE COMO: {client.user}")
-    await tree.sync()
+    try:
+        await tree.sync()
+        print("Comandos barra sincronizados.")
+    except Exception as e:
+        print(f"Error sincronizando comandos: {e}")
 
 @tree.command(name="vincular", description="Vincula dos canales por su ID")
 @app_commands.describe(id_es="ID canal español", id_en="ID canal inglés")
@@ -97,17 +123,15 @@ async def on_message(message):
         
         if destino:
             try:
-                # Traducción segura con reintento interno
-                loop = asyncio.get_running_loop()
-                resultado = await loop.run_in_executor(
-                    None, 
-                    lambda: translator.translate(message.content, dest=idioma)
-                )
-                if resultado and resultado.text:
-                    await enviar_webhook(destino, message, resultado.text)
+                await asyncio.sleep(0.3)
+                traducido = traducir_texto(message.content, idioma)
+                if traducido:
+                    await enviar_webhook(destino, message, traducido)
             except Exception as e:
-                print(f"Error crítico en traducción: {e}")
+                print(f"Error procesando mensaje: {e}")
 
 token = os.environ.get("DISCORD_TOKEN")
 if token:
     client.run(token)
+else:
+    print("ERROR CRÍTICO: Falta DISCORD_TOKEN en las variables de entorno.")
