@@ -48,31 +48,47 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-# Motor dinámico bidireccional con MyMemory + Email de cortesía (Evita bloqueos 429)
+# Sistema de rotación inteligente entre servidores independientes
 def traducir_texto(texto, target_lang):
+    source_lang = "es" if target_lang == "en" else "en"
+    
+    # Intento 1: LibreTranslate (Servidor público oficial)
     try:
-        # Detecta el par de idiomas de forma bidireccional exacta
-        if target_lang == "en":
-            langpair = "es|en"
-        else:
-            langpair = "en|es"
-            
-        encoded_text = urllib.parse.quote(texto)
-        # Añadir un email de contacto en 'de' sube el límite gratuito diario a 10k palabras sin bloqueos de IP
-        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}&de=vortexbot.soporte@gmail.com"
+        data = json.dumps({
+            "q": texto,
+            "source": source_lang,
+            "target": target_lang,
+            "format": "text"
+        }).encode("utf-8")
         
         req = urllib.request.Request(
-            url, 
-            headers={"User-Agent": "Mozilla/5.0"}
+            "https://libretranslate.com/translate",
+            data=data,
+            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
         )
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=4) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            translated = res_data.get("translatedText", "")
+            if translated:
+                return translated
+    except Exception as e:
+        print(f"LibreTranslate ocupado, cambiando de servidor...")
+
+    # Intento 2: MyMemory con par de idiomas explícito
+    try:
+        langpair = f"{source_lang}|{target_lang}"
+        encoded_text = urllib.parse.quote(texto)
+        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}&de=vortexbot.soporte@gmail.com"
+        
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=4) as response:
             res_data = json.loads(response.read().decode("utf-8"))
             translated = res_data.get("responseData", {}).get("translatedText", "")
             if translated and "MYMEMORY WARNING" not in translated:
                 return translated
     except Exception as e:
-        print(f"Error en traducción bidireccional: {e}")
-        
+        print(f"MyMemory también dio error: {e}")
+
     return None
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
@@ -109,9 +125,8 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
     c_es = id_es.strip().replace("<#", "").replace(">", "")
     c_en = id_en.strip().replace("<#", "").replace(">", "")
 
-    # Configuración limpia de canales cruzados
-    PAREJAS_CANALES[c_es] = {"destino": int(c_en), "idioma": "en"} # Canal ES traduce a EN
-    PAREJAS_CANALES[c_en] = {"destino": int(c_es), "idioma": "es"} # Canal EN traduce a ES
+    PAREJAS_CANALES[c_es] = {"destino": int(c_en), "idioma": "en"}
+    PAREJAS_CANALES[c_en] = {"destino": int(c_es), "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
     
     await interaction.followup.send(f"✅ ¡Vinculados <#{c_es}> ⟷ <#{c_en}> de forma bidireccional!", ephemeral=True)
@@ -125,7 +140,7 @@ async def on_message(message):
     if canal_id in PAREJAS_CANALES:
         info = PAREJAS_CANALES[canal_id]
         destino = client.get_channel(info["destino"])
-        idioma = info["idioma"] # Aquí toma 'en' si escribes en español, o 'es' si escribes en inglés
+        idioma = info["idioma"]
         
         if destino:
             try:
@@ -135,7 +150,7 @@ async def on_message(message):
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
                 else:
-                    print("Traducción omitida por fallo temporal del servicio.")
+                    print("Traducción omitida: Ambos servicios están saturados temporalmente.")
             except Exception as e:
                 print(f"Error procesando mensaje: {e}")
 
