@@ -1,13 +1,14 @@
 import os
 import json
 import threading
+import asyncio
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord import app_commands
 from deep_translator import GoogleTranslator
 
-# Forzar salida de consola sin búfer para ver los logs al instante en Render
+# Forzar consola sin búfer para ver los registros al instante en Render
 sys.stdout.reconfigure(line_buffering=True)
 
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -39,7 +40,6 @@ def guardar_config(data):
 
 PAREJAS_CANALES = cargar_config()
 
-# Configuración ultra blindada de Intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -86,7 +86,6 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
 
 @client.event
 async def on_message(message):
-    # Imprimir CUALQUIER mensaje que pase por el bot para forzar visibilidad en Render
     print(f"MENSAJE CAPTURADO -> Autor: {message.author} | Canal: {message.channel.id} | Texto: {message.content}")
 
     if message.author.bot or message.webhook_id is not None or not message.content:
@@ -100,8 +99,11 @@ async def on_message(message):
         
         if destino:
             try:
+                # Pausa asíncrona para evitar el baneo de IP de Google
+                await asyncio.sleep(0.6)
                 traducido = GoogleTranslator(source='auto', target=idioma).translate(message.content)
-                await enviar_webhook(destino, message, traducido)
+                if traducido:
+                    await enviar_webhook(destino, message, traducido)
             except Exception as e:
                 print(f"Error traduciendo: {e}")
 
