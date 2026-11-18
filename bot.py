@@ -1,12 +1,15 @@
 import os
 import json
 import threading
+import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord import app_commands
 from deep_translator import GoogleTranslator
 
-# 1. Servidor web falso para Render
+# Forzar salida de consola sin búfer para ver los logs al instante en Render
+sys.stdout.reconfigure(line_buffering=True)
+
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -19,7 +22,6 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# 2. Configuración y persistencia local
 CONFIG_FILE = "canales_config.json"
 
 def cargar_config():
@@ -37,8 +39,12 @@ def guardar_config(data):
 
 PAREJAS_CANALES = cargar_config()
 
-# 3. Cliente de Discord e Intents
-intents = discord.Intents.all()
+# Configuración ultra blindada de Intents
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.messages = True
+
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
@@ -54,12 +60,13 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
             username=mensaje.author.display_name,
             avatar_url=mensaje.author.display_avatar.url
         )
+        print(f"WEBHOOK ENVIADO EXITOSAMENTE A #{canal_destino.name}")
     except Exception as e:
-        print(f"Error en webhook: {e}")
+        print(f"ERROR EN WEBHOOK: {e}")
 
 @client.event
 async def on_ready():
-    print(f"Conectado como {client.user}")
+    print(f"BOT LOGUEADO CORRECTAMENTE COMO: {client.user}")
     await tree.sync()
 
 @tree.command(name="vincular", description="Vincula dos canales por su ID")
@@ -79,7 +86,9 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
 
 @client.event
 async def on_message(message):
-    # Ignorar mensajes de bots o webhooks propios
+    # Imprimir CUALQUIER mensaje que pase por el bot para forzar visibilidad en Render
+    print(f"MENSAJE CAPTURADO -> Autor: {message.author} | Canal: {message.channel.id} | Texto: {message.content}")
+
     if message.author.bot or message.webhook_id is not None or not message.content:
         return
 
