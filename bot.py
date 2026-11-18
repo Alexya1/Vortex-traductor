@@ -45,6 +45,9 @@ intents.message_content = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
+# ⚠️ CAMBIO CLAVE: Pon aquí el ID exacto de tu servidor de Discord entre las comillas
+MI_SERVIDOR_ID = discord.Object(id=TU_ID_DE_SERVIDOR_AQUÍ)
+
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
         webhooks = await canal_destino.webhooks()
@@ -57,14 +60,15 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
             username=mensaje.author.display_name,
             avatar_url=mensaje.author.display_avatar.url
         )
-        print(f"✅ Traducción enviada con éxito a {canal_destino.name}")
     except Exception as e:
-        print(f"❌ Error al enviar webhook en {canal_destino.name}: {e}")
+        print(f"Error al enviar webhook: {e}")
 
 @client.event
 async def on_ready():
-    await tree.sync()
-    print(f'¡Bot conectado exitosamente como {client.user} y comandos sincronizados!')
+    # Sincroniza al instante con tu servidor específico
+    tree.copy_global_to(guild=MI_SERVIDOR_ID)
+    await tree.sync(guild=MI_SERVIDOR_ID)
+    print(f'¡Bot conectado y comandos sincronizados en el servidor!')
 
 # COMANDOS SLASH
 @tree.command(name="vincular", description="Vincula dos canales para traducción bidireccional")
@@ -72,12 +76,10 @@ async def on_ready():
 @app_commands.checks.has_permissions(administrator=True)
 async def vincular(interaction: discord.Interaction, canal_es: discord.TextChannel, canal_en: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
-    
     global PAREJAS_CANALES
     PAREJAS_CANALES[str(canal_es.id)] = {"destino": canal_en.id, "idioma": "en"}
     PAREJAS_CANALES[str(canal_en.id)] = {"destino": canal_es.id, "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
-    
     await interaction.followup.send(f"✅ ¡Listo! Todo lo que escriban en {canal_es.mention} saldrá en inglés en {canal_en.mention}, y viceversa.", ephemeral=True)
 
 @tree.command(name="desvincular", description="Desvincula un canal de traducción")
@@ -85,7 +87,6 @@ async def vincular(interaction: discord.Interaction, canal_es: discord.TextChann
 @app_commands.checks.has_permissions(administrator=True)
 async def desvincular(interaction: discord.Interaction, canal: discord.TextChannel):
     await interaction.response.defer(ephemeral=True)
-    
     global PAREJAS_CANALES
     canal_id_str = str(canal.id)
     if canal_id_str in PAREJAS_CANALES:
@@ -99,34 +100,10 @@ async def desvincular(interaction: discord.Interaction, canal: discord.TextChann
 @tree.command(name="vinculados", description="Muestra la lista de canales actualmente vinculados")
 async def vinculados(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
-    
     if not PAREJAS_CANALES:
         await interaction.followup.send("ℹ️ No hay canales vinculados en este momento.", ephemeral=True)
         return
 
-    # Para evitar repetir parejas (ya que guardamos ida y vuelta), filtramos
-    vistos = set()
-    texto_lista = "📋 **Canales de traducción activos:**\n"
-    
-    for canal_id_str, info in PAREJAS_CANALES.items():
-        if canal_id_str in vistos:
-            continue
-        
-        destino_id = info["destino"]
-        vistos.add(str(destino_id))
-        vistos.add(canal_id_str)
-        
-        canal_1 = client.get_channel(int(canal_id_str))
-        canal_2 = client.get_channel(int(destino_id))
-        
-        c1_m = canal_1.mention if canal_1 else f"<#{canal_id_str}>"
-        c2_m = canal_2.mention if canal_2 else f"<#{destino_id}>"
-        
-        texto_lista.append(f"• {c1_m} ⟷ {c2_m}\n" if hasattr(texto_lista, 'append') else f"• {c1_m} ⟷ {c2_m}\n")
-        # Si prefieres formato plano acumulativo:
-        # texto_lista += f"• {c1_m} ⟷ {c2_m}\n"
-
-    # Corrección limpia para concatenar strings
     resultado = "📋 **Canales de traducción activos:**\n"
     vistos_limpios = set()
     for canal_id_str, info in PAREJAS_CANALES.items():
