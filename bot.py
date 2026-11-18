@@ -56,7 +56,7 @@ def traducir_texto(texto, target_lang):
     try:
         req = urllib.request.Request(
             url, 
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            headers={"User-Agent": "Mozilla/5.0"}
         )
         with urllib.request.urlopen(req, timeout=4) as response:
             res_data = json.loads(response.read().decode("utf-8"))
@@ -66,8 +66,8 @@ def traducir_texto(texto, target_lang):
     except Exception as e:
         print(f"Aviso de red en traducción: {e}")
         
-    # Si la IP está bloqueada (429), enviamos el texto original con acotación para no perder los mensajes en el chat
-    return f"{texto} [🌐]"
+    # Si la API falla o da 429, devuelve el texto original SIN modificaciones feas
+    return texto
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
