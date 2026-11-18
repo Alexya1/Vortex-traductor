@@ -48,47 +48,42 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-# Sistema de rotación inteligente entre servidores independientes
+DEEPL_KEY = os.environ.get("DEEPL_API_KEY")
+
+# Traductor con DeepL: Autodetecta el origen y traduce al idioma configurado del canal destino
 def traducir_texto(texto, target_lang):
-    source_lang = "es" if target_lang == "en" else "en"
-    
-    # Intento 1: LibreTranslate (Servidor público oficial)
+    if not DEEPL_KEY:
+        print("ERROR: Falta configurar la variable DEEPL_API_KEY en Render.")
+        return None
+        
     try:
-        data = json.dumps({
-            "q": texto,
-            "source": source_lang,
-            "target": target_lang,
-            "format": "text"
+        # Ajuste de formato para DeepL
+        target = "EN-US" if target_lang.lower() == "en" else "ES"
+        
+        url = "https://api-free.deepl.com/v2/translate"
+        data = urllib.parse.urlencode({
+            "text": texto,
+            "target_lang": target
         }).encode("utf-8")
         
         req = urllib.request.Request(
-            "https://libretranslate.com/translate",
+            url,
             data=data,
-            headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+            headers={
+                "Authorization": f"DeepL-Auth-Key {DEEPL_KEY}",
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            method="POST"
         )
-        with urllib.request.urlopen(req, timeout=4) as response:
-            res_data = json.loads(response.read().decode("utf-8"))
-            translated = res_data.get("translatedText", "")
-            if translated:
-                return translated
-    except Exception as e:
-        print(f"LibreTranslate ocupado, cambiando de servidor...")
-
-    # Intento 2: MyMemory con par de idiomas explícito
-    try:
-        langpair = f"{source_lang}|{target_lang}"
-        encoded_text = urllib.parse.quote(texto)
-        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}&de=vortexbot.soporte@gmail.com"
         
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=4) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             res_data = json.loads(response.read().decode("utf-8"))
-            translated = res_data.get("responseData", {}).get("translatedText", "")
-            if translated and "MYMEMORY WARNING" not in translated:
-                return translated
+            translations = res_data.get("translations", [])
+            if translations:
+                return translations[0].get("text")
     except Exception as e:
-        print(f"MyMemory también dio error: {e}")
-
+        print(f"Error en DeepL API: {e}")
+        
     return None
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
@@ -129,7 +124,7 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
     PAREJAS_CANALES[c_en] = {"destino": int(c_es), "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
     
-    await interaction.followup.send(f"✅ ¡Vinculados <#{c_es}> ⟷ <#{c_en}> de forma bidireccional!", ephemeral=True)
+    await interaction.followup.send(f"✅ ¡Vinculados <#{c_es}> ⟷ <#{c_en}> bidireccionalmente!", ephemeral=True)
 
 @client.event
 async def on_message(message):
@@ -150,7 +145,7 @@ async def on_message(message):
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
                 else:
-                    print("Traducción omitida: Ambos servicios están saturados temporalmente.")
+                    print("Traducción omitida por fallo en la API.")
             except Exception as e:
                 print(f"Error procesando mensaje: {e}")
 
