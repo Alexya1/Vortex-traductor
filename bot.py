@@ -3,10 +3,10 @@ import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
-from discord.ext import commands
+from discord import app_commands
 from deep_translator import GoogleTranslator
 
-# 1. SERVIDOR WEB FALSO (Para que Render gratuito no apague el bot)
+# 1. SERVIDOR WEB FALSO (Para Render)
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -20,7 +20,7 @@ def run_server():
 
 threading.Thread(target=run_server, daemon=True).start()
 
-# 2. SISTEMA PARA GUARDAR CANALES DINÁMICOS
+# 2. CONFIGURACIÓN DE CANALES
 CONFIG_FILE = "canales_config.json"
 
 def cargar_config():
@@ -36,13 +36,21 @@ def guardar_config(data):
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# Guardará estructura: {"id_canal_origen": {"destino": id_destino, "idioma": "en" o "es"}}
 PAREJAS_CANALES = cargar_config()
 
-# 3. CONFIGURACIÓN DEL BOT
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+# 3. BOT CON SOPORTE DE SLASH COMMANDS (/)
+class MyBot(discord.Client):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(intents=intents)
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        # Sincroniza los comandos slash con tu servidor de Discord
+        await self.tree.sync()
+
+bot = MyBot()
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
@@ -63,43 +71,39 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
 async def on_ready():
     print(f'Bot conectado exitosamente como {bot.user}')
 
-# COMANDO PARA VINCULAR CANALES EN DISCORD
-@bot.command(name="vincular")
-@commands.has_permissions(administrator=True)
-async def vincular(ctx, canal_es: discord.TextChannel, canal_en: discord.TextChannel):
-    """Uso: !vincular #canal-espanol #canal-ingles"""
+# COMANDO SLASH: /vincular
+@bot.tree.command(name="vincular", description="Vincula dos canales para traducción bidireccional")
+@app_commands.describe(canal_es="Canal de español", canal_en="Canal de inglés")
+@app_commands.checks.has_permissions(administrator=True)
+async def vincular(interaction: discord.Interaction, canal_es: discord.TextChannel, canal_en: discord.TextChannel):
     global PAREJAS_CANALES
     PAREJAS_CANALES[str(canal_es.id)] = {"destino": canal_en.id, "idioma": "en"}
     PAREJAS_CANALES[str(canal_en.id)] = {"destino": canal_es.id, "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
-    await ctx.send(f"✅ ¡Listo! Todo lo que escriban en {canal_es.mention} saldrá en inglés en {canal_en.mention}, y viceversa.")
+    await interaction.response.send_message(f"✅ ¡Listo! Todo lo que escriban en {canal_es.mention} saldrá en inglés en {canal_en.mention}, y viceversa.", ephemeral=True)
 
-# COMANDO PARA DESVINCULAR CANALES
-@bot.command(name="desvincular")
-@commands.has_permissions(administrator=True)
-async def desvincular(ctx, canal: discord.TextChannel):
-    """Uso: !desvincular #canal"""
+# COMANDO SLASH: /desvincular
+@bot.tree.command(name="desvincular", description="Desvincula un canal de traducción")
+@app_commands.describe(canal="Canal a desvincular")
+@app_commands.checks.has_permissions(administrator=True)
+async def desvincular(interaction: discord.Interaction, canal: discord.TextChannel):
     global PAREJAS_CANALES
     canal_id_str = str(canal.id)
     if canal_id_str in PAREJAS_CANALES:
         otro_id = PAREJAS_CANALES.pop(canal_id_str)["destino"]
         PAREJAS_CANALES.pop(str(otro_id), None)
         guardar_config(PAREJAS_CANALES)
-        await ctx.send(f"🗑️ Se desvinculó el canal {canal.mention}.")
+        await interaction.response.send_message(f"🗑️ Se desvinculó el canal {canal.mention}.", ephemeral=True)
     else:
-        await ctx.send(f"⚠️ Ese canal no estaba vinculado a nada.")
+        await interaction.response.send_message(f"⚠️ Ese canal no estaba vinculado a nada.", ephemeral=True)
 
 @bot.event
 async def on_message(message):
     if message.author.bot or message.webhook_id is not None or not message.content:
         return
 
-    # Primero revisa si escribiste un comando (!vincular o !desvincular)
-    await bot.process_commands(message)
-
-    # Si es un mensaje normal, revisa si el canal está vinculado
     canal_id_str = str(message.channel.id)
-    if canal_id_str in PAREJAS_CANALES and not message.content.startswith("!"):
+    if canal_id_str in PAREJAS_CANALES:
         info = PAREJAS_CANALES[canal_id_str]
         destino = bot.get_channel(info["destino"])
         idioma_destino = info["idioma"]
