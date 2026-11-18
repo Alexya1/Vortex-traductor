@@ -62,9 +62,13 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
 
 @client.event
 async def on_ready():
-    await tree.sync()
-    print(f'🚨 ID DEL BOT CONECTADO EN RENDER: {client.user.id}')
-    print(f'🚨 NOMBRE DEL BOT: {client.user.name}')
+    print(f'🚨 ¡BOT CONECTADO Y EN LÍNEA! ID: {client.user.id} | Nombre: {client.user.name}')
+    try:
+        # Sincronización segura sin bloquear
+        synced = await tree.sync()
+        print(f'✅ Comandos sincronizados correctamente: {len(synced)} comandos.')
+    except Exception as e:
+        print(f'⚠️ Error al sincronizar comandos: {e}')
 
 @tree.command(name="vincular", description="Vincula dos canales por su ID exacto")
 @app_commands.describe(id_es="ID del canal de español", id_en="ID del canal de inglés")
