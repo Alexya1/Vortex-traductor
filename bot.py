@@ -48,24 +48,43 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-# Traductor robusto con endpoint de Google GTx (el mismo que usa el navegador)
+DEEPL_KEY = os.environ.get("DEEPL_API_KEY")
+
+# Traductor profesional con DeepL API Free (Cero bloqueos 429)
 def traducir_texto(texto, target_lang):
+    if not DEEPL_KEY:
+        print("ERROR CRÍTICO: Falta la variable DEEPL_API_KEY en Render.")
+        return None
+        
     try:
-        encoded_text = urllib.parse.quote(texto)
-        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={target_lang}&dt=t&q={encoded_text}"
+        # DeepL usa códigos de idioma en mayúsculas (EN, ES, etc.)
+        target_lang = target_lang.upper()
+        if target_lang == "EN":
+            target_lang = "EN-US" # O EN-GB según prefieras
+            
+        url = "https://api-free.deepl.com/v2/translate"
+        data = urllib.parse.urlencode({
+            "text": texto,
+            "target_lang": target_lang
+        }).encode("utf-8")
         
         req = urllib.request.Request(
-            url, 
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            url,
+            data=data,
+            headers={
+                "Authorization": f"DeepL-Auth-Key {DEEPL_KEY}",
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            method="POST"
         )
+        
         with urllib.request.urlopen(req, timeout=5) as response:
             res_data = json.loads(response.read().decode("utf-8"))
-            # Extrae la traducción limpia del JSON de Google
-            translated = "".join([sentence[0] for sentence in res_data[0] if sentence[0]])
-            if translated:
-                return translated
+            translations = res_data.get("translations", [])
+            if translations:
+                return translations[0].get("text")
     except Exception as e:
-        print(f"Error en motor GTx: {e}")
+        print(f"Error en API de DeepL: {e}")
         
     return None
 
@@ -125,11 +144,10 @@ async def on_message(message):
                 loop = asyncio.get_running_loop()
                 traducido = await loop.run_in_executor(None, traducir_texto, message.content, idioma)
                 
-                # SÓLO envía si la traducción fue exitosa de verdad
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
                 else:
-                    print("Traducción descartada: No se envió mensaje sin traducir.")
+                    print("Traducción descartada por fallo en API.")
             except Exception as e:
                 print(f"Error procesando mensaje: {e}")
 
