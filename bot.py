@@ -11,7 +11,6 @@ from discord import app_commands
 
 sys.stdout.reconfigure(line_buffering=True)
 
-# Servidor web para mantener vivo el servicio gratuito en Render
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -49,7 +48,6 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-# Traductor nativo ultraliviano (Cero librerías externas que fallen)
 def traducir_texto(texto, target_lang):
     try:
         langpair = f"autofrom|{target_lang}"
@@ -124,14 +122,4 @@ async def on_message(message):
         if destino:
             try:
                 await asyncio.sleep(0.3)
-                traducido = traducir_texto(message.content, idioma)
-                if traducido:
-                    await enviar_webhook(destino, message, traducido)
-            except Exception as e:
-                print(f"Error procesando mensaje: {e}")
-
-token = os.environ.get("DISCORD_TOKEN")
-if token:
-    client.run(token)
-else:
-    print("ERROR CRÍTICO: Falta DISCORD_TOKEN en las variables de entorno.")
+                traducido = traducir_texto(message.content,
