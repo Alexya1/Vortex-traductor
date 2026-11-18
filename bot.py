@@ -48,26 +48,26 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
+# Traductor robusto con endpoint de Google GTx (el mismo que usa el navegador)
 def traducir_texto(texto, target_lang):
-    langpair = f"autofrom|{target_lang}"
-    encoded_text = urllib.parse.quote(texto)
-    url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}"
-    
     try:
+        encoded_text = urllib.parse.quote(texto)
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={target_lang}&dt=t&q={encoded_text}"
+        
         req = urllib.request.Request(
             url, 
-            headers={"User-Agent": "Mozilla/5.0"}
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         )
-        with urllib.request.urlopen(req, timeout=4) as response:
+        with urllib.request.urlopen(req, timeout=5) as response:
             res_data = json.loads(response.read().decode("utf-8"))
-            translated = res_data.get("responseData", {}).get("translatedText", "")
-            if translated and "MYMEMORY WARNING" not in translated:
+            # Extrae la traducción limpia del JSON de Google
+            translated = "".join([sentence[0] for sentence in res_data[0] if sentence[0]])
+            if translated:
                 return translated
     except Exception as e:
-        print(f"Aviso de red en traducción: {e}")
+        print(f"Error en motor GTx: {e}")
         
-    # Si la API falla o da 429, devuelve el texto original SIN modificaciones feas
-    return texto
+    return None
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
@@ -124,8 +124,12 @@ async def on_message(message):
             try:
                 loop = asyncio.get_running_loop()
                 traducido = await loop.run_in_executor(None, traducir_texto, message.content, idioma)
+                
+                # SÓLO envía si la traducción fue exitosa de verdad
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
+                else:
+                    print("Traducción descartada: No se envió mensaje sin traducir.")
             except Exception as e:
                 print(f"Error procesando mensaje: {e}")
 
