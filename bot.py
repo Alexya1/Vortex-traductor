@@ -3,11 +3,10 @@ import json
 import threading
 import asyncio
 import sys
-import urllib.parse
-import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord import app_commands
+from googletrans import Translator
 
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -47,27 +46,7 @@ intents.messages = True
 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
-
-# Traductor alternativo ultraestable usando MyMemory (sin bloqueos de IP)
-def traducir_texto(texto, target_lang):
-    try:
-        langpair = f"autofrom|{target_lang}"
-        encoded_text = urllib.parse.quote(texto)
-        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}"
-        
-        req = urllib.request.Request(
-            url, 
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            res_data = json.loads(response.read().decode("utf-8"))
-            translated = res_data.get("responseData", {}).get("translatedText", "")
-            if translated:
-                return translated
-        return None
-    except Exception as e:
-        print(f"Error en API de traducción: {e}")
-        return None
+translator = Translator()
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
@@ -81,7 +60,7 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
             username=mensaje.author.display_name,
             avatar_url=mensaje.author.display_avatar.url
         )
-        print(f"WEBHOOK ENVIADO EXITOSAMENTE A #{canal_destino.name}")
+        print(f"WEBHOOK ENVIADO A #{canal_destino.name}")
     except Exception as e:
         print(f"ERROR EN WEBHOOK: {e}")
 
@@ -118,11 +97,16 @@ async def on_message(message):
         
         if destino:
             try:
-                traducido = traducir_texto(message.content, idioma)
-                if traducido:
-                    await enviar_webhook(destino, message, traducido)
+                # Traducción segura con reintento interno
+                loop = asyncio.get_running_loop()
+                resultado = await loop.run_in_executor(
+                    None, 
+                    lambda: translator.translate(message.content, dest=idioma)
+                )
+                if resultado and resultado.text:
+                    await enviar_webhook(destino, message, resultado.text)
             except Exception as e:
-                print(f"Error en flujo de mensaje: {e}")
+                print(f"Error crítico en traducción: {e}")
 
 token = os.environ.get("DISCORD_TOKEN")
 if token:
