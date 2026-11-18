@@ -48,20 +48,23 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-# Traductor alternativo ultraliviano sin bloqueos de librería
+# Traductor alternativo ultraestable usando MyMemory (sin bloqueos de IP)
 def traducir_texto(texto, target_lang):
     try:
+        langpair = f"autofrom|{target_lang}"
         encoded_text = urllib.parse.quote(texto)
-        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={target_lang}&dt=t&q={encoded_text}"
+        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}"
+        
         req = urllib.request.Request(
             url, 
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            headers={"User-Agent": "Mozilla/5.0"}
         )
         with urllib.request.urlopen(req, timeout=5) as response:
             res_data = json.loads(response.read().decode("utf-8"))
-            # Extraer las frases traducidas de la respuesta de Google
-            translated = "".join([sentence[0] for sentence in res_data[0]])
-            return translated
+            translated = res_data.get("responseData", {}).get("translatedText", "")
+            if translated:
+                return translated
+        return None
     except Exception as e:
         print(f"Error en API de traducción: {e}")
         return None
@@ -115,8 +118,6 @@ async def on_message(message):
         
         if destino:
             try:
-                # Pausa ligera para evitar saturación
-                await asyncio.sleep(0.4)
                 traducido = traducir_texto(message.content, idioma)
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
