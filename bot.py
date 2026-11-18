@@ -3,12 +3,12 @@ import json
 import threading
 import asyncio
 import sys
+import urllib.parse
+import urllib.request
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord import app_commands
-from deep_translator import GoogleTranslator
 
-# Forzar consola sin búfer para ver los registros al instante en Render
 sys.stdout.reconfigure(line_buffering=True)
 
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -48,6 +48,24 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
+# Traductor alternativo ultraliviano sin bloqueos de librería
+def traducir_texto(texto, target_lang):
+    try:
+        encoded_text = urllib.parse.quote(texto)
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={target_lang}&dt=t&q={encoded_text}"
+        req = urllib.request.Request(
+            url, 
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            # Extraer las frases traducidas de la respuesta de Google
+            translated = "".join([sentence[0] for sentence in res_data[0]])
+            return translated
+    except Exception as e:
+        print(f"Error en API de traducción: {e}")
+        return None
+
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
         webhooks = await canal_destino.webhooks()
@@ -86,8 +104,6 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
 
 @client.event
 async def on_message(message):
-    print(f"MENSAJE CAPTURADO -> Autor: {message.author} | Canal: {message.channel.id} | Texto: {message.content}")
-
     if message.author.bot or message.webhook_id is not None or not message.content:
         return
 
@@ -99,13 +115,13 @@ async def on_message(message):
         
         if destino:
             try:
-                # Pausa asíncrona para evitar el baneo de IP de Google
-                await asyncio.sleep(0.6)
-                traducido = GoogleTranslator(source='auto', target=idioma).translate(message.content)
+                # Pausa ligera para evitar saturación
+                await asyncio.sleep(0.4)
+                traducido = traducir_texto(message.content, idioma)
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
             except Exception as e:
-                print(f"Error traduciendo: {e}")
+                print(f"Error en flujo de mensaje: {e}")
 
 token = os.environ.get("DISCORD_TOKEN")
 if token:
