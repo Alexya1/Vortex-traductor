@@ -122,4 +122,14 @@ async def on_message(message):
         if destino:
             try:
                 await asyncio.sleep(0.3)
-                traducido = traducir_texto(message.content,
+                traducido = traducir_texto(message.content, idioma)
+                if traducido:
+                    await enviar_webhook(destino, message, traducido)
+            except Exception as e:
+                print(f"Error procesando mensaje: {e}")
+
+token = os.environ.get("DISCORD_TOKEN")
+if token:
+    client.run(token)
+else:
+    print("ERROR CRÍTICO: Falta DISCORD_TOKEN en las variables de entorno.")
