@@ -49,24 +49,28 @@ client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
 def traducir_texto(texto, target_lang):
-    try:
-        langpair = f"autofrom|{target_lang}"
-        encoded_text = urllib.parse.quote(texto)
-        url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}"
-        
-        req = urllib.request.Request(
-            url, 
-            headers={"User-Agent": "Mozilla/5.0"}
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            res_data = json.loads(response.read().decode("utf-8"))
-            translated = res_data.get("responseData", {}).get("translatedText", "")
-            if translated:
-                return translated
-        return None
-    except Exception as e:
-        print(f"Error en motor de traducción: {e}")
-        return None
+    langpair = f"autofrom|{target_lang}"
+    encoded_text = urllib.parse.quote(texto)
+    url = f"https://api.mymemory.translated.net/get?q={encoded_text}&langpair={langpair}"
+    
+    # Sistema de reintentos automáticos ante errores 429 o de red
+    for intento in range(3):
+        try:
+            req = urllib.request.Request(
+                url, 
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                res_data = json.loads(response.read().decode("utf-8"))
+                translated = res_data.get("responseData", {}).get("translatedText", "")
+                if translated:
+                    return translated
+        except Exception as e:
+            print(f"Intento {intento + 1} fallido (Error: {e}). Reintentando...")
+            import time
+            time.sleep(1.5 * (intento + 1)) # Espera progresiva
+            
+    return None
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
     try:
@@ -121,10 +125,13 @@ async def on_message(message):
         
         if destino:
             try:
-                await asyncio.sleep(0.3)
-                traducido = traducir_texto(message.content, idioma)
+                await asyncio.sleep(0.4)
+                loop = asyncio.get_running_loop()
+                traducido = await loop.run_in_executor(None, traducir_texto, message.content, idioma)
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
+                else:
+                    print("No se pudo traducir el mensaje tras los reintentos.")
             except Exception as e:
                 print(f"Error procesando mensaje: {e}")
 
