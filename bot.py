@@ -27,27 +27,19 @@ def cargar_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r") as f:
             try:
-                data = json.load(f)
-                print(f"📂 Configuración cargada con éxito: {data}")
-                return data
+                return json.load(f)
             except json.JSONDecodeError:
-                print("⚠️ Error leyendo el JSON, reiniciando diccionario.")
                 return {}
-    print("ℹ️ No existe archivo de configuración previo, iniciando vacío.")
     return {}
 
 def guardar_config(data):
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f, indent=4)
-    print(f"💾 Configuración guardada en disco: {data}")
 
 PAREJAS_CANALES = cargar_config()
 
-# 3. INICIALIZACIÓN CON INTENTS EXPLÍCITOS
-intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-intents.guilds = True
+# 3. INTENTS TOTALES (Evita cualquier bloqueo de pasarela)
+intents = discord.Intents.all()
 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
@@ -71,10 +63,11 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
 @client.event
 async def on_ready():
     await tree.sync()
-    print(f'🚀 Bot conectado correctamente como {client.user}')
-    print(f'📊 Canales vinculados actualmente en memoria: {PAREJAS_CANALES}')
+    print(f'🚀 BOT CONECTADO OFICIALMENTE COMO: {client.user} (ID: {client.user.id})')
+    print(f'🏠 Servidores donde opera este bot:')
+    for guild in client.guilds:
+        print(f'   - {guild.name} (ID: {guild.id})')
 
-# COMANDOS SLASH
 @tree.command(name="vincular", description="Vincula dos canales por su ID exacto")
 @app_commands.describe(id_es="ID del canal de español", id_en="ID del canal de inglés")
 @app_commands.checks.has_permissions(administrator=True)
@@ -89,14 +82,13 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
     PAREJAS_CANALES[c_en_id] = {"destino": int(c_es_id), "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
     
-    print(f"🔗 Canales vinculados: {c_es_id} <-> {c_en_id}")
-    await interaction.followup.send(f"✅ ¡Vinculación exitosa por ID!\n• <#{c_es_id}> ⟷ <#{c_en_id}>", ephemeral=True)
+    await interaction.followup.send(f"✅ ¡Vinculación exitosa!\n• <#{c_es_id}> ⟷ <#{c_en_id}>", ephemeral=True)
 
 @tree.command(name="vinculados", description="Muestra canales activos")
 async def vinculados(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     global PAREJAS_CANALES
-    PAREJAS_CANALES = cargar_config() # Recarga fresca
+    PAREJAS_CANALES = cargar_config()
     
     if not PAREJAS_CANALES:
         await interaction.followup.send("ℹ️ No hay canales vinculados.", ephemeral=True)
@@ -116,13 +108,9 @@ async def vinculados(interaction: discord.Interaction):
 
 @client.event
 async def on_message(message):
-    # Imprimir CUALQUIER mensaje de texto que ocurra en el servidor
-    if message.author.bot:
-        return
-        
-    print(f"📥 MENSAJE DETECTADO | Autor: {message.author} | Canal ID: {message.channel.id} | Contenido: {message.content}")
+    print(f"📥 MENSAJE RECIBIDO EN PASARELA | Autor: {message.author} | Canal ID: {message.channel.id} | Texto: {message.content}")
 
-    if message.webhook_id is not None or not message.content:
+    if message.author.bot or message.webhook_id is not None or not message.content:
         return
 
     canal_id_str = str(message.channel.id)
@@ -132,21 +120,15 @@ async def on_message(message):
         destino = client.get_channel(info["destino"])
         idioma = info["idioma"]
         
-        print(f"🎯 ¡El canal coincide! Traduciendo a {idioma} hacia el canal ID {info['destino']}")
-        
         if destino:
             try:
                 traducido = GoogleTranslator(source='auto', target=idioma).translate(message.content)
                 await enviar_webhook(destino, message, traducido)
             except Exception as ex:
-                print(f"⚠️ Error traduciendo con GoogleTranslator: {ex}")
-        else:
-            print(f"⚠️ Alerta: El canal destino con ID {info['destino']} no se pudo obtener.")
-    else:
-        print(f"ℹ️ El canal {canal_id_str} NO está en la lista de parejas guardadas.")
+                print(f"⚠️ Error en traducción: {ex}")
 
 token = os.environ.get("DISCORD_TOKEN")
 if not token:
-    print("❌ ERROR CRÍTICO: DISCORD_TOKEN no está definido en las variables de entorno.")
+    print("❌ ERROR: Falta DISCORD_TOKEN")
 else:
     client.run(token)
