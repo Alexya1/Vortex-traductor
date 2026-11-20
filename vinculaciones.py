@@ -7,6 +7,8 @@ import discord
 from discord import app_commands
 
 CONFIG_FILE = "canales_config.json"
+BACKUP_CHANNEL_ID = 1518545714500735107
+BACKUP_PREFIX = "VORTEX_VINCULOS_STATE:"
 
 
 def cargar_config():
@@ -25,6 +27,64 @@ def guardar_config(data):
 
 
 PAREJAS_CANALES = cargar_config()
+_MENSAJE_RESPALDO_ID: int | None = None
+
+
+async def _obtener_canal_respaldo(client: discord.Client) -> discord.TextChannel | None:
+    canal = client.get_channel(BACKUP_CHANNEL_ID)
+    if not isinstance(canal, discord.TextChannel):
+        try:
+            canal = await client.fetch_channel(BACKUP_CHANNEL_ID)
+        except Exception:
+            canal = None
+    return canal if isinstance(canal, discord.TextChannel) else None
+
+
+async def _sincronizar_respaldo_canal(client: discord.Client):
+    global PAREJAS_CANALES, _MENSAJE_RESPALDO_ID
+    canal = await _obtener_canal_respaldo(client)
+    if not canal:
+        return
+
+    try:
+        async for msg in canal.history(limit=50):
+            if msg.author == client.user and msg.content.startswith(BACKUP_PREFIX):
+                _MENSAJE_RESPALDO_ID = msg.id
+                raw = msg.content[len(BACKUP_PREFIX):].strip()
+                datos = json.loads(raw)
+                if isinstance(datos, dict) and datos and not PAREJAS_CANALES:
+                    PAREJAS_CANALES = datos
+                    guardar_config(PAREJAS_CANALES)
+                    print(f"Vinculaciones restauradas automáticamente ({len(PAREJAS_CANALES)} canales).")
+                break
+    except Exception as e:
+        print(f"Error leyendo respaldo de vinculaciones: {e}")
+
+
+async def _guardar_respaldo_canal(client: discord.Client):
+    global _MENSAJE_RESPALDO_ID
+    canal = await _obtener_canal_respaldo(client)
+    if not canal:
+        return
+
+    payload = BACKUP_PREFIX + json.dumps(PAREJAS_CANALES, separators=(",", ":"))
+    if len(payload) > 1950:
+        print("Advertencia: demasiadas vinculaciones para respaldo en un solo mensaje.")
+        return
+
+    try:
+        if _MENSAJE_RESPALDO_ID is not None:
+            try:
+                msg = await canal.fetch_message(_MENSAJE_RESPALDO_ID)
+                await msg.edit(content=payload)
+                return
+            except Exception:
+                _MENSAJE_RESPALDO_ID = None
+
+        nuevo_msg = await canal.send(payload)
+        _MENSAJE_RESPALDO_ID = nuevo_msg.id
+    except Exception as e:
+        print(f"Error guardando respaldo de vinculaciones: {e}")
 
 
 def traducir_google_gtx(texto, source_lang, target_lang):
@@ -81,7 +141,12 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
         print(f"ERROR EN WEBHOOK: {e}")
 
 
-def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTree, handlers_on_message: list):
+def registrar_vinculaciones(
+    client: discord.Client,
+    tree: app_commands.CommandTree,
+    handlers_on_message: list,
+    on_ready_callbacks: list | None = None,
+):
     @tree.command(name="vincular", description="Vincula dos canales (español e inglés) de forma bidireccional")
     @app_commands.describe(canal_es="Canal en español", canal_en="Canal en inglés")
     @app_commands.checks.has_permissions(administrator=True)
@@ -98,6 +163,7 @@ def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTr
         PAREJAS_CANALES[str(canal_es.id)] = {"destino": canal_en.id, "idioma": "en"}
         PAREJAS_CANALES[str(canal_en.id)] = {"destino": canal_es.id, "idioma": "es"}
         guardar_config(PAREJAS_CANALES)
+        await _guardar_respaldo_canal(client)
 
         await interaction.followup.send(
             f"✅ Vinculados {canal_es.mention} ⟷ {canal_en.mention} bidireccionalmente.",
@@ -120,6 +186,7 @@ def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTr
             del PAREJAS_CANALES[destino_id]
 
         guardar_config(PAREJAS_CANALES)
+        await _guardar_respaldo_canal(client)
         destino_mention = f"<#{destino_id}>" if destino_id else "su pareja"
         await interaction.followup.send(
             f"🗑️ Desvinculados {canal.mention} y {destino_mention}.",
@@ -171,3 +238,8 @@ def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTr
                     print(f"Error procesando mensaje: {e}")
 
     handlers_on_message.append(on_message_vinculaciones)
+
+    if on_ready_callbacks is not None:
+        async def _cargar_respaldo():
+            await _sincronizar_respaldo_canal(client)
+        on_ready_callbacks.append(_cargar_respaldo)
