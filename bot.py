@@ -13,8 +13,15 @@ intents.messages = True
 
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
+handlers_on_message = []
 
-registrar_vinculaciones(client, tree)
+registrar_vinculaciones(client, tree, handlers_on_message)
+
+
+@client.event
+async def on_message(message: discord.Message):
+    for handler in handlers_on_message:
+        await handler(message)
 
 
 @client.event
