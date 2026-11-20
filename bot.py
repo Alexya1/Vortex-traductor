@@ -1,41 +1,27 @@
 import os
 import json
-import threading
 import asyncio
 import sys
 import urllib.parse
 import urllib.request
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import discord
 from discord import app_commands
 
 sys.stdout.reconfigure(line_buffering=True)
 
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot activo!")
-
-def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    HTTPServer(('0.0.0.0', port), SimpleHandler).serve_forever()
-
-threading.Thread(target=run_server, daemon=True).start()
-
 CONFIG_FILE = "canales_config.json"
 
 def cargar_config():
     if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             try:
                 return json.load(f)
-            except:
+            except Exception:
                 return {}
     return {}
 
 def guardar_config(data):
-    with open(CONFIG_FILE, "w") as f:
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
 
 PAREJAS_CANALES = cargar_config()
@@ -48,42 +34,38 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-DEEPL_KEY = os.environ.get("DEEPL_API_KEY")
+def traducir_google_gtx(texto, source_lang, target_lang):
+    q = urllib.parse.quote(texto)
+    url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl={source_lang}&tl={target_lang}&dt=t&q={q}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        if data and data[0]:
+            return "".join(part[0] for part in data[0] if part and part[0])
+    return None
 
-# Traductor con DeepL: Autodetecta el origen y traduce al idioma configurado del canal destino
+def traducir_mymemory(texto, source_lang, target_lang):
+    q = urllib.parse.quote(texto)
+    url = f"https://api.mymemory.translated.net/get?q={q}&langpair={source_lang}|{target_lang}"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        trad = data.get("responseData", {}).get("translatedText", "")
+        if trad and "MYMEMORY WARNING" not in trad.upper():
+            return trad
+    return None
+
 def traducir_texto(texto, target_lang):
-    if not DEEPL_KEY:
-        print("ERROR: Falta configurar la variable DEEPL_API_KEY en Render.")
-        return None
-        
-    try:
-        # Ajuste de formato para DeepL
-        target = "EN-US" if target_lang.lower() == "en" else "ES"
-        
-        url = "https://api-free.deepl.com/v2/translate"
-        data = urllib.parse.urlencode({
-            "text": texto,
-            "target_lang": target
-        }).encode("utf-8")
-        
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={
-                "Authorization": f"DeepL-Auth-Key {DEEPL_KEY}",
-                "Content-Type": "application/x-www-form-urlencoded"
-            },
-            method="POST"
-        )
-        
-        with urllib.request.urlopen(req, timeout=5) as response:
-            res_data = json.loads(response.read().decode("utf-8"))
-            translations = res_data.get("translations", [])
-            if translations:
-                return translations[0].get("text")
-    except Exception as e:
-        print(f"Error en DeepL API: {e}")
-        
+    target = "en" if target_lang.lower() == "en" else "es"
+    source = "es" if target == "en" else "en"
+
+    for motor, fn in (("Google GTX", traducir_google_gtx), ("MyMemory", traducir_mymemory)):
+        try:
+            resultado = fn(texto, source, target)
+            if resultado and resultado.strip():
+                return resultado.strip()
+        except Exception as e:
+            print(f"Fallo en {motor}: {e}")
     return None
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido):
@@ -92,7 +74,7 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
         webhook = discord.utils.get(webhooks, name="TraductorEspejo")
         if webhook is None:
             webhook = await canal_destino.create_webhook(name="TraductorEspejo")
-        
+
         await webhook.send(
             content=texto_traducido,
             username=mensaje.author.display_name,
@@ -123,7 +105,7 @@ async def vincular(interaction: discord.Interaction, id_es: str, id_en: str):
     PAREJAS_CANALES[c_es] = {"destino": int(c_en), "idioma": "en"}
     PAREJAS_CANALES[c_en] = {"destino": int(c_es), "idioma": "es"}
     guardar_config(PAREJAS_CANALES)
-    
+
     await interaction.followup.send(f"✅ ¡Vinculados <#{c_es}> ⟷ <#{c_en}> bidireccionalmente!", ephemeral=True)
 
 @client.event
@@ -136,16 +118,15 @@ async def on_message(message):
         info = PAREJAS_CANALES[canal_id]
         destino = client.get_channel(info["destino"])
         idioma = info["idioma"]
-        
+
         if destino:
             try:
                 loop = asyncio.get_running_loop()
                 traducido = await loop.run_in_executor(None, traducir_texto, message.content, idioma)
-                
                 if traducido:
                     await enviar_webhook(destino, message, traducido)
                 else:
-                    print("Traducción omitida por fallo en la API.")
+                    print("Traducción omitida: los motores gratuitos no respondieron.")
             except Exception as e:
                 print(f"Error procesando mensaje: {e}")
 
