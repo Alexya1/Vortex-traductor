@@ -81,7 +81,7 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido):
         print(f"ERROR EN WEBHOOK: {e}")
 
 
-def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTree):
+def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTree, handlers_on_message: list):
     @tree.command(name="vincular", description="Vincula dos canales (español e inglés) de forma bidireccional")
     @app_commands.describe(canal_es="Canal en español", canal_en="Canal en inglés")
     @app_commands.checks.has_permissions(administrator=True)
@@ -170,4 +170,4 @@ def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTr
                 except Exception as e:
                     print(f"Error procesando mensaje: {e}")
 
-    client.add_listener(on_message_vinculaciones, "on_message")
+    handlers_on_message.append(on_message_vinculaciones)
