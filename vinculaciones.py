@@ -149,7 +149,6 @@ def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTr
 
         await interaction.followup.send("**Canales vinculados:**\n" + "\n".join(lineas), ephemeral=True)
 
-    @client.listen("on_message")
     async def on_message_vinculaciones(message: discord.Message):
         if message.author.bot or message.webhook_id is not None or not message.content:
             return
@@ -170,3 +169,5 @@ def registrar_vinculaciones(client: discord.Client, tree: app_commands.CommandTr
                         print("Traducción omitida: los motores gratuitos no respondieron.")
                 except Exception as e:
                     print(f"Error procesando mensaje: {e}")
+
+    client.add_listener(on_message_vinculaciones, "on_message")
