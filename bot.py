@@ -3,6 +3,7 @@ import sys
 import discord
 from discord import app_commands
 from vinculaciones import registrar_vinculaciones
+from tickets_en import registrar_tickets_en
 
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -14,8 +15,10 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 handlers_on_message = []
+on_ready_callbacks = []
 
 registrar_vinculaciones(client, tree, handlers_on_message)
+registrar_tickets_en(client, tree, on_ready_callbacks)
 
 
 @client.event
@@ -27,6 +30,8 @@ async def on_message(message: discord.Message):
 @client.event
 async def on_ready():
     print(f"BOT LOGUEADO CORRECTAMENTE COMO: {client.user}")
+    for cb in on_ready_callbacks:
+        await cb()
     try:
         await tree.sync()
         print("Comandos barra sincronizados.")
