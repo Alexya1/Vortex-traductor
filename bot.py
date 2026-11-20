@@ -17,7 +17,7 @@ tree = app_commands.CommandTree(client)
 handlers_on_message = []
 on_ready_callbacks = []
 
-registrar_vinculaciones(client, tree, handlers_on_message)
+registrar_vinculaciones(client, tree, handlers_on_message, on_ready_callbacks)
 registrar_tickets_en(client, tree, on_ready_callbacks)
 
 
