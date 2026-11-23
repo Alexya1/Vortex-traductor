@@ -12,7 +12,8 @@ CONFIG_FILE = "canales_config.json"
 BACKUP_CHANNEL_ID = 1518545714500735107
 BACKUP_PREFIX = "VORTEX_VINCULOS_STATE:"
 
-CUSTOM_EMOJI_RE = re.compile(r"<a?:[A-Za-z0-9_~]+:\d+>")
+FULL_CUSTOM_EMOJI_RE = re.compile(r"<a?:([A-Za-z0-9_~]+):(\d+)>")
+SHORT_EMOJI_RE = re.compile(r":([A-Za-z0-9_~]{2,32}):")
 
 
 def cargar_config():
@@ -32,6 +33,20 @@ def guardar_config(data):
 
 PAREJAS_CANALES = cargar_config()
 _MENSAJE_RESPALDO_ID: int | None = None
+
+# Mapa: id_mensaje_original -> {"canal_id": int, "mensaje_id": int}
+MENSAJES_ESPEJO: dict[int, dict[str, int]] = {}
+
+
+def _registrar_espejo(origen_msg_id: int, destino_canal_id: int, destino_msg_id: int):
+    MENSAJES_ESPEJO[origen_msg_id] = {
+        "canal_id": destino_canal_id,
+        "mensaje_id": destino_msg_id,
+    }
+    # Limitar el tamaño en memoria para no crecer indefinidamente
+    if len(MENSAJES_ESPEJO) > 2000:
+        clave_mas_vieja = next(iter(MENSAJES_ESPEJO))
+        MENSAJES_ESPEJO.pop(clave_mas_vieja, None)
 
 
 async def _obtener_canal_respaldo(client: discord.Client) -> discord.TextChannel | None:
@@ -114,45 +129,70 @@ def traducir_mymemory(texto, source_lang, target_lang):
     return None
 
 
-def _proteger_emojis(texto: str) -> tuple[str, dict[str, str]]:
-    emojis_encontrados = CUSTOM_EMOJI_RE.findall(texto)
-    if not emojis_encontrados:
-        return texto, {}
+def _resolver_emoji_en_cliente(client: discord.Client | None, raw_token: str) -> str:
+    if FULL_CUSTOM_EMOJI_RE.fullmatch(raw_token):
+        return raw_token
 
+    m_short = SHORT_EMOJI_RE.fullmatch(raw_token)
+    if m_short and client is not None:
+        nombre = m_short.group(1)
+        emoji_obj = discord.utils.get(client.emojis, name=nombre)
+        if emoji_obj is not None:
+            return str(emoji_obj)
+
+    return raw_token
+
+
+def _proteger_emojis(texto: str) -> tuple[str, dict[str, str]]:
     mapa: dict[str, str] = {}
     texto_protegido = texto
-    for idx, emoji_raw in enumerate(emojis_encontrados):
-        token = f"EMJTOKEN{idx}END"
-        mapa[token] = emoji_raw
-        texto_protegido = texto_protegido.replace(emoji_raw, token, 1)
+    contador = 0
+
+    for match in FULL_CUSTOM_EMOJI_RE.finditer(texto):
+        original = match.group(0)
+        token = f"EMJTOKEN{contador}END"
+        contador += 1
+        mapa[token] = original
+        texto_protegido = texto_protegido.replace(original, token, 1)
+
+    for match in SHORT_EMOJI_RE.finditer(texto_protegido):
+        original = match.group(0)
+        token = f"EMJTOKEN{contador}END"
+        contador += 1
+        mapa[token] = original
+        texto_protegido = texto_protegido.replace(original, token, 1)
+
     return texto_protegido, mapa
 
 
-def _restaurar_emojis(texto_traducido: str, mapa: dict[str, str]) -> str:
+def _restaurar_emojis(client: discord.Client | None, texto_traducido: str, mapa: dict[str, str]) -> str:
     if not mapa:
         return texto_traducido
 
     resultado = texto_traducido
-    for token, emoji_raw in mapa.items():
-        # Cubre variaciones de mayúsculas o espacios que pueda meter el traductor
+    for token, raw_emoji in mapa.items():
+        emoji_final = _resolver_emoji_en_cliente(client, raw_emoji)
         patron = re.compile(re.escape(token), re.IGNORECASE)
-        resultado = patron.sub(emoji_raw, resultado)
+        resultado = patron.sub(emoji_final, resultado)
     return resultado
 
 
-def traducir_texto(texto, target_lang):
+def traducir_texto(texto, target_lang, client: discord.Client | None = None):
     target = "en" if target_lang.lower() == "en" else "es"
     source = "es" if target == "en" else "en"
 
     texto_limpio, mapa_emojis = _proteger_emojis(texto)
     if not texto_limpio.strip():
-        return " ".join(mapa_emojis.values()) if mapa_emojis else None
+        if not mapa_emojis:
+            return None
+        resueltos = [_resolver_emoji_en_cliente(client, val) for val in mapa_emojis.values()]
+        return " ".join(resueltos)
 
     for motor, fn in (("Google GTX", traducir_google_gtx), ("MyMemory", traducir_mymemory)):
         try:
             resultado = fn(texto_limpio, source, target)
             if resultado and resultado.strip():
-                return _restaurar_emojis(resultado.strip(), mapa_emojis).strip()
+                return _restaurar_emojis(client, resultado.strip(), mapa_emojis).strip()
         except Exception as e:
             print(f"Fallo en {motor}: {e}")
     return None
@@ -229,13 +269,16 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido: str):
         kwargs = {
             "username": mensaje.author.display_name,
             "avatar_url": mensaje.author.display_avatar.url,
+            "wait": True,
         }
         if contenido:
             kwargs["content"] = contenido
         if archivos:
             kwargs["files"] = archivos
 
-        await webhook.send(**kwargs)
+        msg_enviado = await webhook.send(**kwargs)
+        if msg_enviado is not None:
+            _registrar_espejo(mensaje.id, canal_destino.id, msg_enviado.id)
         print(f"WEBHOOK ENVIADO A #{canal_destino.name} (archivos: {len(archivos)})")
     except discord.Forbidden:
         print(f"ERROR EN WEBHOOK: Sin permisos para gestionar/enviar webhooks en #{canal_destino.name}.")
@@ -248,6 +291,7 @@ def registrar_vinculaciones(
     tree: app_commands.CommandTree,
     handlers_on_message: list,
     on_ready_callbacks: list | None = None,
+    handlers_on_message_delete: list | None = None,
 ):
     @tree.command(name="vincular", description="Vincula dos canales (español e inglés) de forma bidireccional")
     @app_commands.describe(canal_es="Canal en español", canal_en="Canal en inglés")
@@ -335,7 +379,7 @@ def registrar_vinculaciones(
                     traducido = ""
                     if message.content and message.content.strip():
                         loop = asyncio.get_running_loop()
-                        res = await loop.run_in_executor(None, traducir_texto, message.content, idioma)
+                        res = await loop.run_in_executor(None, traducir_texto, message.content, idioma, client)
                         if res:
                             traducido = res
                         else:
@@ -346,7 +390,37 @@ def registrar_vinculaciones(
                 except Exception as e:
                     print(f"Error procesando mensaje: {e}")
 
+    async def on_message_delete_vinculaciones(message: discord.Message):
+        ref = MENSAJES_ESPEJO.pop(message.id, None)
+        if not ref:
+            return
+
+        destino_canal = client.get_channel(ref["canal_id"])
+        if not isinstance(destino_canal, discord.TextChannel):
+            try:
+                fetched = await client.fetch_channel(ref["canal_id"])
+                destino_canal = fetched if isinstance(fetched, discord.TextChannel) else None
+            except Exception:
+                destino_canal = None
+
+        if not isinstance(destino_canal, discord.TextChannel):
+            return
+
+        try:
+            msg_espejo = await destino_canal.fetch_message(ref["mensaje_id"])
+            await msg_espejo.delete()
+            print(f"Mensaje espejo eliminado en #{destino_canal.name}.")
+        except discord.NotFound:
+            pass
+        except discord.Forbidden:
+            print(f"Sin permisos para borrar mensaje espejo en #{destino_canal.name}.")
+        except Exception as e:
+            print(f"Error borrando mensaje espejo: {e}")
+
     handlers_on_message.append(on_message_vinculaciones)
+
+    if handlers_on_message_delete is not None:
+        handlers_on_message_delete.append(on_message_delete_vinculaciones)
 
     if on_ready_callbacks is not None:
         async def _cargar_respaldo():
