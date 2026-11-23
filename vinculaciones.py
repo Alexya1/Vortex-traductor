@@ -1,3 +1,4 @@
+import io
 import os
 import json
 import asyncio
@@ -124,18 +125,46 @@ def traducir_texto(texto, target_lang):
     return None
 
 
-async def enviar_webhook(canal_destino, mensaje, texto_traducido):
+async def _preparar_archivos(mensaje: discord.Message) -> list[discord.File]:
+    archivos = []
+    for att in mensaje.attachments:
+        try:
+            data = await att.read()
+            archivos.append(
+                discord.File(
+                    fp=io.BytesIO(data),
+                    filename=att.filename,
+                    spoiler=att.is_spoiler(),
+                )
+            )
+        except Exception as e:
+            print(f"Error descargando adjunto {att.filename}: {e}")
+    return archivos
+
+
+async def enviar_webhook(canal_destino, mensaje, texto_traducido: str):
     try:
         webhooks = await canal_destino.webhooks()
         webhook = discord.utils.get(webhooks, name="TraductorEspejo")
         if webhook is None:
             webhook = await canal_destino.create_webhook(name="TraductorEspejo")
 
-        await webhook.send(
-            content=texto_traducido,
-            username=mensaje.author.display_name,
-            avatar_url=mensaje.author.display_avatar.url
-        )
+        archivos = await _preparar_archivos(mensaje)
+        contenido = texto_traducido or None
+
+        if not contenido and not archivos:
+            return
+
+        kwargs = {
+            "username": mensaje.author.display_name,
+            "avatar_url": mensaje.author.display_avatar.url,
+        }
+        if contenido:
+            kwargs["content"] = contenido
+        if archivos:
+            kwargs["files"] = archivos
+
+        await webhook.send(**kwargs)
         print(f"WEBHOOK ENVIADO A #{canal_destino.name}")
     except Exception as e:
         print(f"ERROR EN WEBHOOK: {e}")
@@ -217,7 +246,9 @@ def registrar_vinculaciones(
         await interaction.followup.send("**Canales vinculados:**\n" + "\n".join(lineas), ephemeral=True)
 
     async def on_message_vinculaciones(message: discord.Message):
-        if message.author.bot or message.webhook_id is not None or not message.content:
+        if message.author.bot or message.webhook_id is not None:
+            return
+        if not message.content and not message.attachments:
             return
 
         canal_id = str(message.channel.id)
@@ -228,12 +259,17 @@ def registrar_vinculaciones(
 
             if destino:
                 try:
-                    loop = asyncio.get_running_loop()
-                    traducido = await loop.run_in_executor(None, traducir_texto, message.content, idioma)
-                    if traducido:
+                    traducido = ""
+                    if message.content and message.content.strip():
+                        loop = asyncio.get_running_loop()
+                        res = await loop.run_in_executor(None, traducir_texto, message.content, idioma)
+                        if res:
+                            traducido = res
+                        else:
+                            print("Traducción omitida: los motores gratuitos no respondieron.")
+
+                    if traducido or message.attachments:
                         await enviar_webhook(destino, message, traducido)
-                    else:
-                        print("Traducción omitida: los motores gratuitos no respondieron.")
                 except Exception as e:
                     print(f"Error procesando mensaje: {e}")
 
