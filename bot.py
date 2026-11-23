@@ -15,15 +15,28 @@ intents.messages = True
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 handlers_on_message = []
+handlers_on_message_delete = []
 on_ready_callbacks = []
 
-registrar_vinculaciones(client, tree, handlers_on_message, on_ready_callbacks)
+registrar_vinculaciones(
+    client,
+    tree,
+    handlers_on_message,
+    on_ready_callbacks,
+    handlers_on_message_delete,
+)
 registrar_tickets_en(client, tree, on_ready_callbacks)
 
 
 @client.event
 async def on_message(message: discord.Message):
     for handler in handlers_on_message:
+        await handler(message)
+
+
+@client.event
+async def on_message_delete(message: discord.Message):
+    for handler in handlers_on_message_delete:
         await handler(message)
 
 
