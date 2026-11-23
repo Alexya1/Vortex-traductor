@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import json
 import asyncio
 import urllib.parse
@@ -10,6 +11,8 @@ from discord import app_commands
 CONFIG_FILE = "canales_config.json"
 BACKUP_CHANNEL_ID = 1518545714500735107
 BACKUP_PREFIX = "VORTEX_VINCULOS_STATE:"
+
+CUSTOM_EMOJI_RE = re.compile(r"<a?:[A-Za-z0-9_~]+:\d+>")
 
 
 def cargar_config():
@@ -111,25 +114,63 @@ def traducir_mymemory(texto, source_lang, target_lang):
     return None
 
 
+def _proteger_emojis(texto: str) -> tuple[str, dict[str, str]]:
+    emojis_encontrados = CUSTOM_EMOJI_RE.findall(texto)
+    if not emojis_encontrados:
+        return texto, {}
+
+    mapa: dict[str, str] = {}
+    texto_protegido = texto
+    for idx, emoji_raw in enumerate(emojis_encontrados):
+        token = f"EMJTOKEN{idx}END"
+        mapa[token] = emoji_raw
+        texto_protegido = texto_protegido.replace(emoji_raw, token, 1)
+    return texto_protegido, mapa
+
+
+def _restaurar_emojis(texto_traducido: str, mapa: dict[str, str]) -> str:
+    if not mapa:
+        return texto_traducido
+
+    resultado = texto_traducido
+    for token, emoji_raw in mapa.items():
+        # Cubre variaciones de mayúsculas o espacios que pueda meter el traductor
+        patron = re.compile(re.escape(token), re.IGNORECASE)
+        resultado = patron.sub(emoji_raw, resultado)
+    return resultado
+
+
 def traducir_texto(texto, target_lang):
     target = "en" if target_lang.lower() == "en" else "es"
     source = "es" if target == "en" else "en"
 
+    texto_limpio, mapa_emojis = _proteger_emojis(texto)
+    if not texto_limpio.strip():
+        return " ".join(mapa_emojis.values()) if mapa_emojis else None
+
     for motor, fn in (("Google GTX", traducir_google_gtx), ("MyMemory", traducir_mymemory)):
         try:
-            resultado = fn(texto, source, target)
+            resultado = fn(texto_limpio, source, target)
             if resultado and resultado.strip():
-                return resultado.strip()
+                return _restaurar_emojis(resultado.strip(), mapa_emojis).strip()
         except Exception as e:
             print(f"Fallo en {motor}: {e}")
     return None
 
 
-async def _preparar_archivos(mensaje: discord.Message) -> list[discord.File]:
-    archivos = []
+def _descargar_url_sync(url: str) -> bytes | None:
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return resp.read()
+
+
+async def _preparar_archivos_y_stickers(mensaje: discord.Message) -> tuple[list[discord.File], list[str]]:
+    archivos: list[discord.File] = []
+    notas_extra: list[str] = []
+
     for att in mensaje.attachments:
         try:
-            data = await att.read()
+            data = await asyncio.wait_for(att.read(), timeout=15)
             archivos.append(
                 discord.File(
                     fp=io.BytesIO(data),
@@ -139,7 +180,30 @@ async def _preparar_archivos(mensaje: discord.Message) -> list[discord.File]:
             )
         except Exception as e:
             print(f"Error descargando adjunto {att.filename}: {e}")
-    return archivos
+
+    loop = asyncio.get_running_loop()
+    for sticker in mensaje.stickers:
+        try:
+            url = getattr(sticker, "url", None)
+            if url and not url.endswith(".json"):
+                data = await loop.run_in_executor(None, _descargar_url_sync, url)
+                if data:
+                    ext = ".png"
+                    if ".apng" in url:
+                        ext = ".apng"
+                    elif ".webp" in url:
+                        ext = ".webp"
+                    elif ".gif" in url:
+                        ext = ".gif"
+                    nombre = f"sticker-{sticker.name or sticker.id}{ext}".replace(" ", "_")
+                    archivos.append(discord.File(fp=io.BytesIO(data), filename=nombre))
+                    continue
+            notas_extra.append(f"[Sticker: {sticker.name}]")
+        except Exception as e:
+            print(f"Error descargando sticker {sticker.name}: {e}")
+            notas_extra.append(f"[Sticker: {sticker.name}]")
+
+    return archivos, notas_extra
 
 
 async def enviar_webhook(canal_destino, mensaje, texto_traducido: str):
@@ -149,10 +213,17 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido: str):
         if webhook is None:
             webhook = await canal_destino.create_webhook(name="TraductorEspejo")
 
-        archivos = await _preparar_archivos(mensaje)
-        contenido = texto_traducido or None
+        archivos, notas_extra = await _preparar_archivos_y_stickers(mensaje)
+        partes_texto = []
+        if texto_traducido and texto_traducido.strip():
+            partes_texto.append(texto_traducido.strip())
+        if notas_extra:
+            partes_texto.append(" ".join(notas_extra))
+
+        contenido = "\n".join(partes_texto) if partes_texto else None
 
         if not contenido and not archivos:
+            print("Mensaje sin contenido traducible, adjuntos ni stickers para reenviar.")
             return
 
         kwargs = {
@@ -165,7 +236,9 @@ async def enviar_webhook(canal_destino, mensaje, texto_traducido: str):
             kwargs["files"] = archivos
 
         await webhook.send(**kwargs)
-        print(f"WEBHOOK ENVIADO A #{canal_destino.name}")
+        print(f"WEBHOOK ENVIADO A #{canal_destino.name} (archivos: {len(archivos)})")
+    except discord.Forbidden:
+        print(f"ERROR EN WEBHOOK: Sin permisos para gestionar/enviar webhooks en #{canal_destino.name}.")
     except Exception as e:
         print(f"ERROR EN WEBHOOK: {e}")
 
@@ -248,7 +321,7 @@ def registrar_vinculaciones(
     async def on_message_vinculaciones(message: discord.Message):
         if message.author.bot or message.webhook_id is not None:
             return
-        if not message.content and not message.attachments:
+        if not message.content and not message.attachments and not message.stickers:
             return
 
         canal_id = str(message.channel.id)
@@ -268,7 +341,7 @@ def registrar_vinculaciones(
                         else:
                             print("Traducción omitida: los motores gratuitos no respondieron.")
 
-                    if traducido or message.attachments:
+                    if traducido or message.attachments or message.stickers:
                         await enviar_webhook(destino, message, traducido)
                 except Exception as e:
                     print(f"Error procesando mensaje: {e}")
